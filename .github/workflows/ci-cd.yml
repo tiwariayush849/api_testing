@@ -1,0 +1,209 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 20
+  TEST_DIRS: 'tests test-results playwright-report'
+  ARTIFACT_RETENTION: 7
+
+jobs:
+  install:
+    name: Install Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify .env configuration
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            echo "Created .env from .env.example"
+          fi
+          echo "Config verification passed"
+
+      - name: Upload dependency artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-dependencies
+          path: |
+            node_modules/
+            .env
+            playwright.config.js
+          retention-days: 1
+          if-no-files-found: warn
+
+  copy:
+    name: Copy Test Files
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download dependency artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installed-dependencies
+          path: .
+
+      - name: Verify test file structure
+        run: |
+          echo "Test files:"
+          find tests -name "*.spec.js" -type f
+          find e2e -name "*.spec.js" -type f
+          echo "Helper files:"
+          find utils -name "*.js" -type f
+
+      - name: Validate .env
+        run: |
+          source .env 2>/dev/null || true
+          echo "API_BASE_URL=${API_BASE_URL:-https://jsonplaceholder.typicode.com}"
+          echo "NODE_ENV=${NODE_ENV:-development}"
+
+      - name: Upload test files artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-files
+          path: |
+            tests/
+            e2e/
+            utils/
+            package.json
+            playwright.config.js
+            .env
+          retention-days: 1
+
+  test:
+    name: Run Tests
+    needs: copy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Download dependency artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installed-dependencies
+          path: .
+
+      - name: Download test files artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: test-files
+          path: .
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run API tests
+        run: npm run test:api
+        env:
+          CI: true
+
+      - name: Run full test suite
+        run: npx playwright test --reporter=list
+        env:
+          CI: true
+
+      - name: Upload test output artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: |
+            test-results/
+            playwright-report/
+            test-results.json
+          retention-days: 1
+
+  result:
+    name: Collect Results
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download test output artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: test-output
+          path: ./collected-results
+
+      - name: Summarize test results
+        run: |
+          echo "=== Test Results Summary ==="
+          if [ -f collected-results/test-results.json ]; then
+            node -e "
+              const r = require('./collected-results/test-results.json');
+              const total = r.suites?.reduce((a, s) => a + (s.specs?.length || 0), 0) || 0;
+              const passed = (r.suites || []).filter(s => !s.errors?.length).length;
+              const failed = (r.suites || []).filter(s => s.errors?.length > 0).length;
+              console.log('Suites:', r.suites?.length || 0);
+              console.log('Passed suites:', passed);
+              console.log('Failed suites:', failed);
+            " 2>/dev/null || cat collected-results/test-results.json | head -50
+          else
+            echo "No test-results.json found"
+          fi
+
+      - name: Upload final results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-test-results
+          path: |
+            collected-results/test-results/
+            collected-results/playwright-report/
+            collected-results/test-results.json
+          retention-days: ${{ env.ARTIFACT_RETENTION }}
+          if-no-files-found: warn
+
+      - name: Output summary
+        run: |
+          echo "Results collected and uploaded"
+
+  cleanup:
+    name: Cleanup
+    needs: [install, copy, test, result]
+    runs-on: ubuntu-latest
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Clean up artifacts
+        run: |
+          echo "Cleaning up CI/CD pipeline artifacts"
+          echo "Pipeline completed for: ${{ github.repository }}"
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

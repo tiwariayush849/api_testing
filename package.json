@@ -1,0 +1,23 @@
+{
+  "name": "playwright",
+  "version": "1.0.0",
+  "description": "Playwright API testing project for demo website",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:api": "npx playwright test tests/api/",
+    "test:headed": "npx playwright test --headed",
+    "test:report": "npx playwright test --reporter=html",
+    "test:watch": "npx playwright test --watch",
+    "install:browsers": "npx playwright install chromium"
+  },
+  "keywords": ["playwright", "api", "testing", "automation"],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.20.3",
+    "dotenv": "^16.4.5"
+  }
+}
