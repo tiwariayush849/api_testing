@@ -109,20 +109,18 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Download dependency artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: installed-dependencies
-          path: .
+      - name: Verify .env configuration
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            echo "Created .env from .env.example"
+          fi
 
-      - name: Download test files artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: test-files
-          path: .
+      - name: Install npm dependencies
+        run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run API tests
         run: npm run test:api
@@ -130,11 +128,12 @@ jobs:
           CI: true
 
       - name: Run full test suite
-        run: npx playwright test --reporter=list
+        run: npx playwright test
         env:
           CI: true
 
       - name: Upload test output artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-output
@@ -143,6 +142,7 @@ jobs:
             playwright-report/
             test-results.json
           retention-days: 1
+          if-no-files-found: warn
 
   result:
     name: Collect Results
@@ -156,6 +156,7 @@ jobs:
 
       - name: Download test output artifact
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: test-output
           path: ./collected-results
